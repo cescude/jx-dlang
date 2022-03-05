@@ -1,0 +1,15 @@
+.dub
+docs.json
+__dummy.html
+docs/
+/jx
+jx.so
+jx.dylib
+jx.dll
+jx.a
+jx.lib
+jx-test-*
+*.exe
+*.o
+*.obj
+*.lst

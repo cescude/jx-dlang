@@ -1,0 +1,9 @@
+{
+	"authors": [
+		"Chandler"
+	],
+	"copyright": "Copyright © 2022, Chandler",
+	"description": "greppable json",
+	"license": "proprietary",
+	"name": "jx"
+}
