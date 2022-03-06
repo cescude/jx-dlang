@@ -23,11 +23,10 @@ struct Segment {
   }
 }
 
-void main()
-{
+void main(string[] args) {
   Document doc = {};
 
-	foreach (const ubyte[] buffer; stdin.chunks(4096)) {
+	foreach (const ubyte[] buffer; stdin.chunks(1)) {
     for (size_t i=0; i<buffer.length; i++) {
       doc.feed(buffer[i]);
     }
@@ -40,7 +39,6 @@ void put(S)(S s) {
 
 void newline() {
   stdout.write("\n");
-  fflush(stdout.getFP);
   stdout.flush();
 }
 
