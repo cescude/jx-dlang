@@ -14,14 +14,13 @@ enum ParsingState {
 }
 
 enum SegmentType {JsonObject, JsonArray};
-union SegmentData {
-  int idx;
-  Appender!(ubyte[]) key;
-};
 
 struct Segment {
   SegmentType type;
-  SegmentData data;
+  union {
+    int idx;
+    Appender!(ubyte[]) key;
+  }
 }
 
 void main()
@@ -35,14 +34,27 @@ void main()
   }
 }
 
+void put(S)(S s) {
+  stdout.write(s);
+}
+
+void newline() {
+  stdout.write("\n");
+  fflush(stdout.getFP);
+  stdout.flush();
+}
+
 void feed(ref Document doc, ubyte tok) {
   final switch (doc.st) {
     case ParsingState.Root:
       return root(doc, tok);
+
     case ParsingState.ObjWantingKey:
       return objWantingKey(doc, tok);
+
     case ParsingState.ObjReadingKey:
       return objReadingKey(doc, tok);
+
     case ParsingState.ObjWantingValue:
       return objWantingValue(doc, tok);
 
@@ -66,14 +78,14 @@ void feed(ref Document doc, ubyte tok) {
 Segment objectSegment() {
   Segment s;
   s.type = SegmentType.JsonObject;
-  s.data.key = appender!(ubyte[]);
+  s.key = appender!(ubyte[]);
   return s;
 }
 
 Segment arraySegment() {
   Segment s;
   s.type = SegmentType.JsonArray;
-  s.data.idx = 0;
+  s.idx = 0;
   return s;
 }
 
@@ -81,7 +93,7 @@ bool isWhite(ubyte b) {
   return b <= cast(ubyte)' ';
 }
 
-S last(S)(Appender!(S[]) app) {
+ref S last(S)(ref Appender!(S[]) app) {
   return app[][app[].length-1];
 }
 
@@ -92,35 +104,18 @@ void pop(S)(ref Appender!(S[]) app) {
 void writeFullKey(const Document doc) {
   foreach (i, Segment s; doc.segs[]) {
     if ( i > 0 ) {
-      write('.');
+      put('.');
     }
     final switch (s.type) {
       case SegmentType.JsonObject:
-        write(cast(string)s.data.key[]);
+        put(cast(string)s.key[]);
         break;
       case SegmentType.JsonArray:
-        write(s.data.idx-1);
+        put(s.idx-1);
         break;
     }
   }
-  write(" ");
-}
-
-void root(ref Document doc, ubyte tok) {
-  //write("root", cast(char)tok);
-  switch (tok) {
-    case cast(ubyte)'{':
-      doc.st = ParsingState.ObjWantingKey;
-      doc.segs.put(objectSegment());
-      break;
-    case cast(ubyte)'[':
-      doc.st = ParsingState.ArrWantingValue;
-      doc.segs.put(arraySegment());
-      break;
-    default:
-      write(cast(char)tok);
-      break;
-  }
+  put("  ");
 }
 
 void popSegment(ref Document doc) {
@@ -140,9 +135,25 @@ void popSegment(ref Document doc) {
   }
 }
 
+// State parsing functions
+
+void root(ref Document doc, ubyte tok) {
+  if ( tok == cast(ubyte)'{' ) {
+    doc.st = ParsingState.ObjWantingKey;
+    doc.segs.put(objectSegment());
+    return;
+  }
+
+  if ( tok == cast(ubyte)'[' ) {
+    doc.st = ParsingState.ArrWantingValue;
+    doc.segs.put(arraySegment());
+    return;
+  }
+
+  put(cast(char)tok);
+}
 
 void objWantingKey(ref Document doc, ubyte tok) {
-  //write("objWantingKey", cast(char)tok);
   // {     "some"   : "thing" }
   //  1     2
   // {"some":"thing"  , "else": true }
@@ -150,153 +161,156 @@ void objWantingKey(ref Document doc, ubyte tok) {
   // {"some":"thing"   }
   //                1  2
   if (isWhite(tok) || tok == cast(ubyte)',') return;
+
   if (tok == cast(ubyte)'"') {
     doc.st = ParsingState.ObjReadingKey;
-    doc.segs.last.data.key.clear();
+    doc.segs.last.key.clear();
     return;
   }
+
   if (tok == cast(ubyte)'}') {
     popSegment(doc);
     return;
   }
 
-  // bad JSON?
-  write("DEBUG BAD THINGS #1");
   doc.st = ParsingState.Root;
   doc.segs.clear();
   doc.escape = false;
 }
 
 void objReadingKey(ref Document doc, ubyte tok) {
-  //write("objReadingKey", cast(char)tok);
   if (doc.escape) {
-    doc.segs.last.data.key.put(tok);
+    doc.segs.last.key.put(tok);
     doc.escape = false;
     return;
   }
 
-  switch (tok) {
-    case cast(ubyte)'\\':
-      doc.escape = true;
-      doc.segs.last.data.key.put(tok);
-      return;
-    case cast(ubyte)'"':
-      doc.st = ParsingState.ObjWantingValue;
-      return;
-    default:
-      doc.segs.last.data.key.put(tok);
-      return;
+  if (tok == cast(ubyte)'\\') {
+    doc.escape = true;
+    doc.segs.last.key.put(tok);
+    return;
   }
+
+  if (tok == cast(ubyte)'"') {
+    doc.st = ParsingState.ObjWantingValue;
+    return;
+  }
+
+  doc.segs.last.key.put(tok);
 }
 
 void objWantingValue(ref Document doc, ubyte tok) {
   //write("TODO, but with key=", cast(string)doc.segs.last.data.key[]);
   if (isWhite(tok) || tok == cast(ubyte)':') return;
 
-  switch (tok) {
-    case cast(ubyte)'{':
-      doc.st = ParsingState.ObjWantingKey;
-      doc.segs.put(objectSegment());
-      return;
-    case cast(ubyte)'[':
-      doc.st = ParsingState.ArrWantingValue;
-      doc.segs.put(arraySegment());
-      return;
-
-    case cast(ubyte)'"':
-      writeFullKey(doc);
-      write('"');
-      doc.st = ParsingState.ObjReadingStringValue;
-      return;
-
-    // TODO: If we wanted to make sure the value is valid, could do
-    // case 't', 'f', '0-9', 'n'
-    default:
-      writeFullKey(doc);
-      write(cast(char)tok);
-      doc.st = ParsingState.ObjReadingBareValue;
-      return;
+  if (tok == cast(ubyte)'{' ) {
+    doc.st = ParsingState.ObjWantingKey;
+    doc.segs.put(objectSegment());
+    return;
   }
+  
+  if (tok == cast(ubyte)'[' ) {
+    doc.st = ParsingState.ArrWantingValue;
+    doc.segs.put(arraySegment());
+    return;
+  }
+
+  if (tok == cast(ubyte)'"' ) {
+    writeFullKey(doc);
+    put('"');
+    doc.st = ParsingState.ObjReadingStringValue;
+    return;
+  }
+
+  // TODO: If we wanted to make sure the value is valid, could do
+  // case 't', 'f', '0-9', 'n'. Don't really care though!
+
+  writeFullKey(doc);
+  put(cast(char)tok);
+  doc.st = ParsingState.ObjReadingBareValue;
 }
 
 void arrWantingValue(ref Document doc, ubyte tok) {
   if (isWhite(tok) || tok == cast(ubyte)',') return;
 
-  //doc.segs.last.data.idx = 5;
-  doc.segs[][doc.segs[].length-1].data.idx++;
+  doc.segs.last.idx++;
   
-  switch (tok) {
-    case cast(ubyte)'{':
-      doc.st = ParsingState.ObjWantingKey;
-      doc.segs.put(objectSegment());
-      break;
-    case cast(ubyte)'[':
-      doc.st = ParsingState.ArrWantingValue;
-      doc.segs.put(arraySegment());
-      break;
-    case cast(ubyte)']':
-      popSegment(doc);
-      return;
-
-    case cast(ubyte)'"':
-      writeFullKey(doc);
-      write('"');
-      doc.st = ParsingState.ArrReadingStringValue;
-      break;
-
-    // TODO: If we wanted to make sure the value is valid, could do
-    // case 't', 'f', '0-9', 'n'
-    default:
-      writeFullKey(doc);
-      write(cast(char)tok);
-      doc.st = ParsingState.ArrReadingBareValue;
-      break;
+  if (tok == cast(ubyte)'{' ) {
+    doc.st = ParsingState.ObjWantingKey;
+    doc.segs.put(objectSegment());
+    return;
   }
+
+  if (tok == cast(ubyte)'[' ) {
+    doc.st = ParsingState.ArrWantingValue;
+    doc.segs.put(arraySegment());
+    return;
+  }
+  
+  if (tok == cast(ubyte)']' ) {
+    popSegment(doc);
+    return;
+  }
+
+  if (tok == cast(ubyte)'"' ) {
+    writeFullKey(doc);
+    put('"');
+    doc.st = ParsingState.ArrReadingStringValue;
+    return;
+  }
+
+  // TODO: If we wanted to make sure the value is valid, could do
+  // case 't', 'f', '0-9', 'n'
+
+  writeFullKey(doc);
+  put(cast(char)tok);
+  doc.st = ParsingState.ArrReadingBareValue;
 }
 
 void readingStringValue(ref Document doc, ubyte tok, ParsingState nextState) {
   if (doc.escape) {
-    write(cast(char)tok);
+    put(cast(char)tok);
     doc.escape = false;
     return;
   }
 
   if ( tok == cast(ubyte)'\\' ) {
     doc.escape = true;
-    write('\\');
+    put('\\');
     return;
   }
 
   if ( tok == cast(ubyte)'"' ) {
     doc.st = nextState;
-    writeln('"');
+    put('"');
+    newline();
     return;
   }
 
-  write(cast(char)tok);
+  stdout.write(cast(char)tok);
 }
 
 void readingBareValue(ref Document doc, ubyte tok, ParsingState nextState) {
   if (tok == cast(ubyte)']') {
     // todo: if nextState != ParsingState.ArrWantingValue we have bad JSON
-    writeln();
+    newline();
     popSegment(doc);
     return;
   }
 
   if (tok == cast(ubyte)'}') {
     // todo: if nextState != ObjWantingKey we have bad json
-    writeln();
+    newline();
     popSegment(doc);
     return;
   }
 
   if ( isWhite(tok) || tok == cast(ubyte)',' ) {
-    writeln();
+    newline();
     doc.st = nextState;
     return;
   }
 
-  write(cast(char)tok);
+  put(cast(char)tok);
 }
 
