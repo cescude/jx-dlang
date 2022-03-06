@@ -1,9 +1,13 @@
 import std.stdio;
 import std.array;
+import std.getopt;
+import std.exception;
 
 struct Document {
   ParsingState st = ParsingState.Root;
   bool escape = false;
+  bool flushOnEveryLine = false;
+  ubyte[] filename = null;
   Appender!(Segment[]) segs = appender!(Segment[]);
 }
 
@@ -24,22 +28,106 @@ struct Segment {
 }
 
 void main(string[] args) {
-  Document doc = {};
 
-	foreach (const ubyte[] buffer; stdin.chunks(1)) {
-    for (size_t i=0; i<buffer.length; i++) {
-      doc.feed(buffer[i]);
+  auto helpInfo = getopt(args, config.passThrough);
+  if (helpInfo.helpWanted) {
+    defaultGetoptPrinter(
+      "Usage: jx [FILE]...",
+      helpInfo.options
+    );
+    return;
+  }
+
+  process(args[1..$]);
+}
+
+void process(string[] files) {
+
+  if (files.length == 0) {
+    processStdin();
+    return;
+  }
+
+  foreach (string file; files) {
+    if (files.length > 1) {
+      // TODO: WOuld be better to prefix each line w/ the name!
+      //writeln("==> ", file, " <==");
     }
+    processFile(file, files.length > 1);
   }
 }
 
-void put(S)(S s) {
-  stdout.write(s);
+void processStdin() {
+  Document doc = {};
+  doc.flushOnEveryLine = true;
+	foreach (const ubyte[] buffer; stdin.chunks(1)) {
+    feed(doc, buffer[0]);
+  }
+  flush();
 }
 
-void newline() {
-  stdout.write("\n");
-  stdout.flush();
+void processFile(string filename, bool includeFilename) {
+  try {
+    auto f = File(filename, "r");
+
+    Document doc = {};
+    if (includeFilename) {
+      doc.filename = cast(ubyte[])filename;
+    }
+    foreach (const ubyte[] buffer; f.chunks(4096)) {
+      for (size_t i=0; i<buffer.length; i++) {
+        feed(doc, buffer[i]);
+      }
+    }
+
+    flush();
+  }
+  catch (ErrnoException e) {
+    writeln("Unable to read file: ", filename);
+  }
+}
+
+ubyte[4096] writeBuffer;
+size_t writeBufferLength = 0;
+void flush() {
+  stdout.rawWrite(writeBuffer[0..writeBufferLength]);
+  writeBufferLength = 0;
+}
+
+void printByte(ubyte b) {
+  if (writeBufferLength == writeBuffer.length) {
+    flush();
+  }
+  writeBuffer[writeBufferLength++] = b;
+}
+
+void printByteSlice(const ubyte[] buffer) {
+  foreach (ubyte b; buffer) {
+    printByte(b);
+  }
+}
+
+void printNumber(size_t n) {
+  size_t numDigits = 0;
+  ubyte[20] buf; // <-- check to see how large this actually needs to be TODO!
+  if (n == 0) {
+    printByte(cast(ubyte)'0');
+    return;
+  }
+  while (n > 0) {
+    buf[numDigits++] = cast(ubyte)'0' + (n%10);
+    n /= 10;
+  }
+  for (size_t i=1; i<=numDigits; i++) {
+    printByte(buf[numDigits-i]);
+  }
+}
+
+void printNewline(bool doFlush) {
+  printByte(cast(ubyte)'\n');
+  if (doFlush) {
+    flush();
+  }
 }
 
 void feed(ref Document doc, ubyte tok) {
@@ -100,20 +188,26 @@ void pop(S)(ref Appender!(S[]) app) {
 }
 
 void writeFullKey(const Document doc) {
+  if (doc.filename !is null) {
+    printByteSlice(doc.filename);
+    printByte(':');
+  }
+
   foreach (i, Segment s; doc.segs[]) {
     if ( i > 0 ) {
-      put('.');
+      printByte(46);
     }
     final switch (s.type) {
       case SegmentType.JsonObject:
-        put(cast(string)s.key[]);
+        printByteSlice(s.key[]);
         break;
       case SegmentType.JsonArray:
-        put(s.idx-1);
+        printNumber(s.idx-1);
         break;
     }
   }
-  put("  ");
+  //put("  ");
+  printByte(32); printByte(32);
 }
 
 void popSegment(ref Document doc) {
@@ -148,7 +242,8 @@ void root(ref Document doc, ubyte tok) {
     return;
   }
 
-  put(cast(char)tok);
+  // TODO: Include this if we want interspersed json (as in a log file or something)
+  //put(cast(char)tok);
 }
 
 void objWantingKey(ref Document doc, ubyte tok) {
@@ -215,7 +310,7 @@ void objWantingValue(ref Document doc, ubyte tok) {
 
   if (tok == cast(ubyte)'"' ) {
     writeFullKey(doc);
-    put('"');
+    printByte(cast(ubyte)'"');
     doc.st = ParsingState.ObjReadingStringValue;
     return;
   }
@@ -224,7 +319,7 @@ void objWantingValue(ref Document doc, ubyte tok) {
   // case 't', 'f', '0-9', 'n'. Don't really care though!
 
   writeFullKey(doc);
-  put(cast(char)tok);
+  printByte(tok);
   doc.st = ParsingState.ObjReadingBareValue;
 }
 
@@ -252,7 +347,7 @@ void arrWantingValue(ref Document doc, ubyte tok) {
 
   if (tok == cast(ubyte)'"' ) {
     writeFullKey(doc);
-    put('"');
+    printByte(cast(ubyte)'"');
     doc.st = ParsingState.ArrReadingStringValue;
     return;
   }
@@ -261,54 +356,54 @@ void arrWantingValue(ref Document doc, ubyte tok) {
   // case 't', 'f', '0-9', 'n'
 
   writeFullKey(doc);
-  put(cast(char)tok);
+  printByte(tok);
   doc.st = ParsingState.ArrReadingBareValue;
 }
 
 void readingStringValue(ref Document doc, ubyte tok, ParsingState nextState) {
   if (doc.escape) {
-    put(cast(char)tok);
+    printByte(tok);
     doc.escape = false;
     return;
   }
 
   if ( tok == cast(ubyte)'\\' ) {
     doc.escape = true;
-    put('\\');
+    printByte(cast(ubyte)'\\');
     return;
   }
 
   if ( tok == cast(ubyte)'"' ) {
     doc.st = nextState;
-    put('"');
-    newline();
+    printByte(cast(ubyte)'"');
+    printNewline(doc.flushOnEveryLine);
     return;
   }
 
-  stdout.write(cast(char)tok);
+  printByte(tok);
 }
 
 void readingBareValue(ref Document doc, ubyte tok, ParsingState nextState) {
   if (tok == cast(ubyte)']') {
     // todo: if nextState != ParsingState.ArrWantingValue we have bad JSON
-    newline();
+    printNewline(doc.flushOnEveryLine);
     popSegment(doc);
     return;
   }
 
   if (tok == cast(ubyte)'}') {
     // todo: if nextState != ObjWantingKey we have bad json
-    newline();
+    printNewline(doc.flushOnEveryLine);
     popSegment(doc);
     return;
   }
 
   if ( isWhite(tok) || tok == cast(ubyte)',' ) {
-    newline();
+    printNewline(doc.flushOnEveryLine);
     doc.st = nextState;
     return;
   }
 
-  put(cast(char)tok);
+  printByte(tok);
 }
 
