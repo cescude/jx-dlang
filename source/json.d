@@ -5,7 +5,6 @@ import std.array;
 
 struct DocState {
   ParsingState st = ParsingState.Root;
-  bool escape = false;
   immutable bool flushOnEveryLine = false;
   immutable bool printLineNumbers = false;
   const ubyte[] filename = null;
@@ -15,10 +14,28 @@ struct DocState {
 
 enum ParsingState {
   Root,
-  ObjWantingKey, ObjReadingKey,
-  ObjWantingValue, ObjReadingStringValue, ObjReadingBareValue,
-  ArrWantingValue, ArrReadingStringValue, ArrReadingBareValue,
+  ObjWantingKey, 
+  ObjReadingKey, ObjReadingKeyEscaped,
+  ObjWantingValue, 
+  ObjReadingStringValue, ObjReadingStringValueEscaped, ObjReadingBareValue,
+  ArrWantingValue, 
+  ArrReadingStringValue, ArrReadingStringValueEscaped, ArrReadingBareValue,
 }
+
+immutable void function(ref DocState, ubyte)[] table = [
+  &root,
+  &objWantingKey,
+  &objReadingKey,
+  &objReadingKeyEscaped,
+  &objWantingValue,
+  &objReadingStringValue,
+  &objReadingStringValueEscaped,
+  &objReadingBareValue,
+  &arrWantingValue,
+  &arrReadingStringValue,
+  &arrReadingStringValueEscaped,
+  &arrReadingBareValue
+];
 
 enum SegmentType {JsonObject, JsonArray};
 
@@ -105,34 +122,7 @@ void printFullKey(const DocState doc) {
 }
 
 void feed(ref DocState doc, ubyte tok) {
-  final switch (doc.st) {
-    case ParsingState.Root:
-      return root(doc, tok);
-
-    case ParsingState.ObjWantingKey:
-      return objWantingKey(doc, tok);
-
-    case ParsingState.ObjReadingKey:
-      return objReadingKey(doc, tok);
-
-    case ParsingState.ObjWantingValue:
-      return objWantingValue(doc, tok);
-
-    case ParsingState.ObjReadingStringValue:
-      return readingStringValue(doc, tok, ParsingState.ObjWantingKey);
-
-    case ParsingState.ObjReadingBareValue:
-      return readingBareValue(doc, tok, ParsingState.ObjWantingKey);
-
-    case ParsingState.ArrWantingValue:
-      return arrWantingValue(doc, tok);
-
-    case ParsingState.ArrReadingStringValue:
-      return readingStringValue(doc, tok, ParsingState.ArrWantingValue);
-
-    case ParsingState.ArrReadingBareValue:
-      return readingBareValue(doc, tok, ParsingState.ArrWantingValue);
-  }
+  table[doc.st](doc, tok);
 }
 
 void finish() {
@@ -223,19 +213,12 @@ void objWantingKey(ref DocState doc, ubyte tok) {
 
   doc.st = ParsingState.Root;
   doc.segs.clear();
-  doc.escape = false;
 }
 
 void objReadingKey(ref DocState doc, ubyte tok) {
-  if (doc.escape) {
-    doc.escape = false;
-    doc.segs.last.key ~= tok;
-    return;
-  }
-
   if (tok == cast(ubyte)'\\') {
-    doc.escape = true;
     doc.segs.last.key ~= tok;
+    doc.st = ParsingState.ObjReadingKeyEscaped;
     return;
   }
 
@@ -245,6 +228,11 @@ void objReadingKey(ref DocState doc, ubyte tok) {
   }
 
   doc.segs.last.key ~= tok;
+}
+
+void objReadingKeyEscaped(ref DocState doc, ubyte tok) {
+  doc.segs.last.key ~= tok;
+  doc.st = ParsingState.ObjReadingKey;
 }
 
 void objWantingValue(ref DocState doc, ubyte tok) {
@@ -315,21 +303,15 @@ void arrWantingValue(ref DocState doc, ubyte tok) {
   doc.st = ParsingState.ArrReadingBareValue;
 }
 
-void readingStringValue(ref DocState doc, ubyte tok, ParsingState nextState) {
-  if (doc.escape) {
-    printByte(tok);
-    doc.escape = false;
-    return;
-  }
-
+void objReadingStringValue(ref DocState doc, ubyte tok) {
   if ( tok == cast(ubyte)'\\' ) {
-    doc.escape = true;
-    printByte(cast(ubyte)'\\');
+    doc.st = ParsingState.ObjReadingStringValueEscaped;
+    printByte(tok);
     return;
   }
 
   if ( tok == cast(ubyte)'"' ) {
-    doc.st = nextState;
+    doc.st = ParsingState.ObjWantingKey;
     printByte(cast(ubyte)'"');
     printNewline(doc.flushOnEveryLine);
     return;
@@ -338,16 +320,35 @@ void readingStringValue(ref DocState doc, ubyte tok, ParsingState nextState) {
   printByte(tok);
 }
 
-void readingBareValue(ref DocState doc, ubyte tok, ParsingState nextState) {
-  if (tok == cast(ubyte)']') {
-    // todo: if nextState != ParsingState.ArrWantingValue we have bad JSON
-    printNewline(doc.flushOnEveryLine);
-    popSegment(doc);
+void objReadingStringValueEscaped(ref DocState doc, ubyte tok) {
+  printByte(tok);
+  doc.st = ParsingState.ObjReadingStringValue;
+}
+
+void arrReadingStringValue(ref DocState doc, ubyte tok) {
+  if ( tok == cast(ubyte)'\\' ) {
+    doc.st = ParsingState.ArrReadingStringValueEscaped;
+    printByte(cast(ubyte)'\\');
     return;
   }
 
+  if ( tok == cast(ubyte)'"' ) {
+    doc.st = ParsingState.ArrWantingValue;
+    printByte(cast(ubyte)'"');
+    printNewline(doc.flushOnEveryLine);
+    return;
+  }
+
+  printByte(tok);
+}
+
+void arrReadingStringValueEscaped(ref DocState doc, ubyte tok) {
+  printByte(tok);
+  doc.st = ParsingState.ArrReadingStringValue;
+}
+
+void objReadingBareValue(ref DocState doc, ubyte tok) {
   if (tok == cast(ubyte)'}') {
-    // todo: if nextState != ObjWantingKey we have bad json
     printNewline(doc.flushOnEveryLine);
     popSegment(doc);
     return;
@@ -355,7 +356,23 @@ void readingBareValue(ref DocState doc, ubyte tok, ParsingState nextState) {
 
   if ( isWhite(tok) || tok == cast(ubyte)',' ) {
     printNewline(doc.flushOnEveryLine);
-    doc.st = nextState;
+    doc.st = ParsingState.ObjWantingKey;
+    return;
+  }
+
+  printByte(tok);
+}
+
+void arrReadingBareValue(ref DocState doc, ubyte tok) {
+  if (tok == cast(ubyte)']') {
+    printNewline(doc.flushOnEveryLine);
+    popSegment(doc);
+    return;
+  }
+
+  if ( isWhite(tok) || tok == cast(ubyte)',' ) {
+    printNewline(doc.flushOnEveryLine);
+    doc.st = ParsingState.ArrWantingValue;
     return;
   }
 
