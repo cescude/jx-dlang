@@ -12,9 +12,9 @@ struct Document {
 }
 
 enum ParsingState {
-  Root, 
-  ObjWantingKey, ObjReadingKey, ObjWantingValue, ObjReadingStringValue, ObjReadingBareValue,
-  ArrWantingValue, ArrReadingStringValue, ArrReadingBareValue,
+  Root, ObjWantingKey, ObjReadingKey, ObjWantingValue, ObjReadingStringValue,
+  ObjReadingBareValue, ArrWantingValue, ArrReadingStringValue,
+  ArrReadingBareValue,
 }
 
 enum SegmentType {JsonObject, JsonArray};
@@ -23,7 +23,7 @@ struct Segment {
   SegmentType type;
   union {
     int idx;
-    Appender!(ubyte[]) key;
+    ubyte[] key;
   }
 }
 
@@ -49,20 +49,16 @@ void process(string[] files) {
   }
 
   foreach (string file; files) {
-    if (files.length > 1) {
-      // TODO: WOuld be better to prefix each line w/ the name!
-      //writeln("==> ", file, " <==");
-    }
     processFile(file, files.length > 1);
   }
 }
 
 void processStdin() {
-  Document doc = {};
-  doc.flushOnEveryLine = true;
+  Document doc = { flushOnEveryLine:true };
 	foreach (const ubyte[] buffer; stdin.chunks(1)) {
     feed(doc, buffer[0]);
   }
+
   flush();
 }
 
@@ -74,6 +70,7 @@ void processFile(string filename, bool includeFilename) {
     if (includeFilename) {
       doc.filename = cast(ubyte[])filename;
     }
+
     foreach (const ubyte[] buffer; f.chunks(4096)) {
       for (size_t i=0; i<buffer.length; i++) {
         feed(doc, buffer[i]);
@@ -164,7 +161,7 @@ void feed(ref Document doc, ubyte tok) {
 Segment objectSegment() {
   Segment s;
   s.type = SegmentType.JsonObject;
-  s.key = appender!(ubyte[]);
+  s.key = new ubyte[32];
   return s;
 }
 
@@ -199,7 +196,7 @@ void writeFullKey(const Document doc) {
     }
     final switch (s.type) {
       case SegmentType.JsonObject:
-        printByteSlice(s.key[]);
+        printByteSlice(s.key);
         break;
       case SegmentType.JsonArray:
         printNumber(s.idx-1);
@@ -257,7 +254,7 @@ void objWantingKey(ref Document doc, ubyte tok) {
 
   if (tok == cast(ubyte)'"') {
     doc.st = ParsingState.ObjReadingKey;
-    doc.segs.last.key.clear();
+    doc.segs.last.key.length = 0;
     return;
   }
 
@@ -273,14 +270,14 @@ void objWantingKey(ref Document doc, ubyte tok) {
 
 void objReadingKey(ref Document doc, ubyte tok) {
   if (doc.escape) {
-    doc.segs.last.key.put(tok);
     doc.escape = false;
+    doc.segs.last.key ~= tok;
     return;
   }
 
   if (tok == cast(ubyte)'\\') {
     doc.escape = true;
-    doc.segs.last.key.put(tok);
+    doc.segs.last.key ~= tok;
     return;
   }
 
@@ -289,7 +286,7 @@ void objReadingKey(ref Document doc, ubyte tok) {
     return;
   }
 
-  doc.segs.last.key.put(tok);
+  doc.segs.last.key ~= tok;
 }
 
 void objWantingValue(ref Document doc, ubyte tok) {
