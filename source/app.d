@@ -33,6 +33,7 @@ struct Segment {
   }
 }
 
+
 struct Options {
   bool withFilename = false;
   bool noFilename = false;
@@ -44,7 +45,7 @@ void main(string[] args) {
   auto opts = Options();
 
   auto helpInfo = getopt(
-    args, config.passThrough, config.bundling,
+    args, config.passThrough, config.bundling, config.caseSensitive,
     "with-filename|H", "Print file name with output lines.", &opts.withFilename,
     "no-filename", "Suppress the file name prefix on output.", &opts.noFilename,
     "line-number|n", "Print line number with output lines.", &opts.withLineNumbers
