@@ -7,14 +7,20 @@ struct Document {
   ParsingState st = ParsingState.Root;
   bool escape = false;
   bool flushOnEveryLine = false;
+  bool printLineNumbers = false;
   ubyte[] filename = null;
+  size_t lineNumber = 1;
   Appender!(Segment[]) segs = appender!(Segment[]);
 }
 
 enum ParsingState {
-  Root, ObjWantingKey, ObjReadingKey, ObjWantingValue, ObjReadingStringValue,
-  ObjReadingBareValue, ArrWantingValue, ArrReadingStringValue,
-  ArrReadingBareValue,
+  Root,
+
+  ObjWantingKey, ObjReadingKey,
+
+  ObjWantingValue, ObjReadingStringValue, ObjReadingBareValue,
+
+  ArrWantingValue, ArrReadingStringValue, ArrReadingBareValue,
 }
 
 enum SegmentType {JsonObject, JsonArray};
@@ -27,9 +33,23 @@ struct Segment {
   }
 }
 
+struct Options {
+  bool withFilename = false;
+  bool noFilename = false;
+  bool withLineNumbers = false;
+}
+
 void main(string[] args) {
 
-  auto helpInfo = getopt(args, config.passThrough);
+  auto opts = Options();
+
+  auto helpInfo = getopt(
+    args, config.passThrough, config.bundling,
+    "with-filename|H", "Print file name with output lines.", &opts.withFilename,
+    "no-filename", "Suppress the file name prefix on output.", &opts.noFilename,
+    "line-number|n", "Print line number with output lines.", &opts.withLineNumbers
+  );
+
   if (helpInfo.helpWanted) {
     defaultGetoptPrinter(
       "Usage: jx [FILE]...",
@@ -38,41 +58,61 @@ void main(string[] args) {
     return;
   }
 
-  process(args[1..$]);
+  process(args[1..$], opts);
 }
 
-void process(string[] files) {
+void process(string[] files, Options opts) {
 
   if (files.length == 0) {
-    processStdin();
-    return;
+    processStdin(opts.withFilename, opts.withLineNumbers);
   }
-
-  foreach (string file; files) {
-    processFile(file, files.length > 1);
+  else if (files.length == 1) {
+    processFile(files[0], opts.withFilename, opts.withLineNumbers);
+  }
+  else {
+    foreach (string file; files) {
+      processFile(file, !opts.noFilename, opts.withLineNumbers);
+    }
   }
 }
 
-void processStdin() {
-  Document doc = { flushOnEveryLine:true };
+void processStdin(bool withFilename, bool withLineNumbers) {
+  Document doc = { 
+    flushOnEveryLine: true,
+    printLineNumbers: withLineNumbers
+  };
+
+  if (withFilename) {
+    doc.filename = cast(ubyte[])"-";
+  }
+
 	foreach (const ubyte[] buffer; stdin.chunks(1)) {
+    if (buffer[0] == cast(ubyte)'\n') {
+      doc.lineNumber++;
+    }
     feed(doc, buffer[0]);
   }
 
   flush();
 }
 
-void processFile(string filename, bool includeFilename) {
+void processFile(string filename, bool withFilename, bool withLineNumbers) {
   try {
     auto f = File(filename, "r");
 
-    Document doc = {};
-    if (includeFilename) {
+    Document doc = {
+      printLineNumbers: withLineNumbers
+    };
+
+    if (withFilename) {
       doc.filename = cast(ubyte[])filename;
     }
 
     foreach (const ubyte[] buffer; f.chunks(4096)) {
       for (size_t i=0; i<buffer.length; i++) {
+        if (buffer[i] == cast(ubyte)'\n') {
+          doc.lineNumber++;
+        }
         feed(doc, buffer[i]);
       }
     }
@@ -189,10 +229,14 @@ void writeFullKey(const Document doc) {
     printByteSlice(doc.filename);
     printByte(':');
   }
+  if (doc.printLineNumbers) {
+    printNumber(doc.lineNumber);
+    printByte(':');
+  }
 
   foreach (i, Segment s; doc.segs[]) {
     if ( i > 0 ) {
-      printByte(46);
+      printByte(cast(ubyte)'.');
     }
     final switch (s.type) {
       case SegmentType.JsonObject:
@@ -203,8 +247,9 @@ void writeFullKey(const Document doc) {
         break;
     }
   }
-  //put("  ");
-  printByte(32); printByte(32);
+ 
+  printByte(' ');
+  printByte(' ');
 }
 
 void popSegment(ref Document doc) {
