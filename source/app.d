@@ -1,9 +1,8 @@
 import std.stdio;
 import std.array;
 import std.getopt;
-import std.exception;
 
-import json : init, feed, finish;
+import json : processStdin, processFile;
 
 struct Options {
   bool withFilename = false;
@@ -45,33 +44,6 @@ void process(string[] files, const Options opts) {
     foreach (string file; files) {
       processFile(file, !opts.noFilename, opts.withLineNumbers);
     }
-  }
-
-  finish();
-}
-
-void processStdin(bool withFilename, bool withLineNumbers) {
-  init(true, withLineNumbers, withFilename ? cast(ubyte[])"-" : null);
-
-  foreach (const ubyte[] buffer; stdin.chunks(1)) {
-    feed(buffer[0]);
-  }
-}
-
-void processFile(string filename, bool withFilename, bool withLineNumbers) {
-  try {
-    auto f = File(filename, "r");
-
-    init(false, withLineNumbers, withFilename ? cast(ubyte[])filename : null);
-
-    foreach (const ubyte[] buffer; f.chunks(4096)) {
-      for (size_t i=0; i<buffer.length; i++) {
-        feed(buffer[i]);
-      }
-    }
-  }
-  catch (ErrnoException e) {
-    writeln("Unable to read file: ", filename);
   }
 }
 

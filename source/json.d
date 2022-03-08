@@ -2,6 +2,7 @@ module json;
 
 import std.stdio;
 import std.array;
+import std.exception;
 
 ParsingState st;
 bool flushOnEveryLine;
@@ -9,40 +10,6 @@ bool printLineNumbers;
 ubyte[] filename;
 size_t lineNumber;
 Appender!(Segment[]) segs;
-
-void init(bool optFlushOnEveryLine, bool optPrintLineNumbers, ubyte[] optFilename) {
-  st = ParsingState.Root;
-  flushOnEveryLine = optFlushOnEveryLine;
-  printLineNumbers = optPrintLineNumbers;
-  filename = optFilename;
-  lineNumber = 1;
-  segs = appender!(Segment[]);
-}
-
-enum ParsingState {
-  Root,
-  ObjWantingKey, 
-  ObjReadingKey, ObjReadingKeyEscaped,
-  ObjWantingValue, 
-  ObjReadingStringValue, ObjReadingStringValueEscaped, ObjReadingBareValue,
-  ArrWantingValue, 
-  ArrReadingStringValue, ArrReadingStringValueEscaped, ArrReadingBareValue,
-}
-
-immutable void function(ubyte)[] table = [
-  &root,
-  &objWantingKey,
-  &objReadingKey,
-  &objReadingKeyEscaped,
-  &objWantingValue,
-  &objReadingStringValue,
-  &objReadingStringValueEscaped,
-  &objReadingBareValue,
-  &arrWantingValue,
-  &arrReadingStringValue,
-  &arrReadingStringValueEscaped,
-  &arrReadingBareValue
-];
 
 enum SegmentType {JsonObject, JsonArray};
 
@@ -52,6 +19,15 @@ struct Segment {
     size_t idx;
     Appender!(ubyte[]) key;
   }
+}
+
+void init(bool optFlushOnEveryLine, bool optPrintLineNumbers, ubyte[] optFilename) {
+  st = ParsingState.Root;
+  flushOnEveryLine = optFlushOnEveryLine;
+  printLineNumbers = optPrintLineNumbers;
+  filename = optFilename;
+  lineNumber = 1;
+  segs = appender!(Segment[]);
 }
 
 ubyte[4096] writeBuffer;
@@ -128,14 +104,63 @@ void printFullKey() {
   printByte(' ');
 }
 
-void feed(ubyte tok) {
-  if (tok == cast(ubyte)'\n') {
-    lineNumber++;
-  }
-  table[st](tok);
+enum ParsingState {
+  Root,
+  ObjWantingKey, 
+  ObjReadingKey, ObjReadingKeyEscaped,
+  ObjWantingValue, 
+  ObjReadingStringValue, ObjReadingStringValueEscaped, ObjReadingBareValue,
+  ArrWantingValue, 
+  ArrReadingStringValue, ArrReadingStringValueEscaped, ArrReadingBareValue,
 }
 
-void finish() {
+immutable void function(ubyte)[] processState = [
+  &root,
+  &objWantingKey,
+  &objReadingKey,
+  &objReadingKeyEscaped,
+  &objWantingValue,
+  &objReadingStringValue,
+  &objReadingStringValueEscaped,
+  &objReadingBareValue,
+  &arrWantingValue,
+  &arrReadingStringValue,
+  &arrReadingStringValueEscaped,
+  &arrReadingBareValue
+];
+
+void processStdin(bool withFilename, bool withLineNumbers) {
+  init(true, withLineNumbers, withFilename ? cast(ubyte[])"-" : null);
+
+  foreach (const ubyte[] buffer; stdin.chunks(1)) {
+    if (buffer[0] == cast(ubyte)'\n') {
+      lineNumber++;
+    }
+    processState[st](buffer[0]);
+  }
+
+  flush();
+}
+
+void processFile(string filename, bool withFilename, bool withLineNumbers) {
+  try {
+    auto f = File(filename, "r");
+
+    init(false, withLineNumbers, withFilename ? cast(ubyte[])filename : null);
+
+    foreach (const ubyte[] buffer; f.chunks(4096)) {
+      for (size_t i=0; i<buffer.length; i++) {
+        if (buffer[i] == cast(ubyte)'\n') {
+          lineNumber++;
+        }
+        processState[st](buffer[i]);
+      }
+    }
+  }
+  catch (ErrnoException e) {
+    writeln("Unable to read file: ", filename);
+  }
+
   flush();
 }
 
