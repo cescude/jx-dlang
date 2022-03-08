@@ -50,7 +50,7 @@ struct Segment {
   SegmentType type;
   union {
     size_t idx;
-    ubyte[] key;
+    Appender!(ubyte[]) key;
   }
 }
 
@@ -116,7 +116,7 @@ void printFullKey() {
     }
     final switch (s.type) {
       case SegmentType.JsonObject:
-        printByteSlice(s.key);
+        printByteSlice(s.key[]);
         break;
       case SegmentType.JsonArray:
         printNumber(s.idx-1);
@@ -142,7 +142,7 @@ void finish() {
 Segment objectSegment() {
   Segment s;
   s.type = SegmentType.JsonObject;
-  s.key = new ubyte[32];
+  s.key = appender!(ubyte[]);
   return s;
 }
 
@@ -212,7 +212,7 @@ void objWantingKey(ubyte tok) {
 
   if (tok == cast(ubyte)'"') {
     st = ParsingState.ObjReadingKey;
-    segs.last.key.length = 0;
+    segs.last.key.clear();
     return;
   }
 
@@ -227,7 +227,7 @@ void objWantingKey(ubyte tok) {
 
 void objReadingKey(ubyte tok) {
   if (tok == cast(ubyte)'\\') {
-    segs.last.key ~= tok;
+    segs.last.key.put(tok);
     st = ParsingState.ObjReadingKeyEscaped;
     return;
   }
@@ -237,11 +237,11 @@ void objReadingKey(ubyte tok) {
     return;
   }
 
-  segs.last.key ~= tok;
+  segs.last.key.put(tok); 
 }
 
 void objReadingKeyEscaped(ubyte tok) {
-  segs.last.key ~= tok;
+  segs.last.key.put(tok);
   st = ParsingState.ObjReadingKey;
 }
 
