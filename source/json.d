@@ -3,13 +3,20 @@ module json;
 import std.stdio;
 import std.array;
 
-struct DocState {
-  ParsingState st = ParsingState.Root;
-  immutable bool flushOnEveryLine = false;
-  immutable bool printLineNumbers = false;
-  const ubyte[] filename = null;
-  size_t lineNumber = 1;
-  Appender!(Segment[]) segs = appender!(Segment[]);
+ParsingState st;
+bool flushOnEveryLine;
+bool printLineNumbers;
+ubyte[] filename;
+size_t lineNumber;
+Appender!(Segment[]) segs;
+
+void init(bool optFlushOnEveryLine, bool optPrintLineNumbers, ubyte[] optFilename) {
+  st = ParsingState.Root;
+  flushOnEveryLine = optFlushOnEveryLine;
+  printLineNumbers = optPrintLineNumbers;
+  filename = optFilename;
+  lineNumber = 1;
+  segs = appender!(Segment[]);
 }
 
 enum ParsingState {
@@ -22,7 +29,7 @@ enum ParsingState {
   ArrReadingStringValue, ArrReadingStringValueEscaped, ArrReadingBareValue,
 }
 
-immutable void function(ref DocState, ubyte)[] table = [
+immutable void function(ubyte)[] table = [
   &root,
   &objWantingKey,
   &objReadingKey,
@@ -93,17 +100,17 @@ void printNewline(bool doFlush) {
   }
 }
 
-void printFullKey(const DocState doc) {
-  if (doc.filename !is null) {
-    printByteSlice(doc.filename);
+void printFullKey() {
+  if (filename !is null) {
+    printByteSlice(filename);
     printByte(':');
   }
-  if (doc.printLineNumbers) {
-    printNumber(doc.lineNumber);
+  if (printLineNumbers) {
+    printNumber(lineNumber);
     printByte(':');
   }
 
-  foreach (i, Segment s; doc.segs[]) {
+  foreach (i, Segment s; segs[]) {
     if ( i > 0 ) {
       printByte(cast(ubyte)'.');
     }
@@ -121,8 +128,11 @@ void printFullKey(const DocState doc) {
   printByte(' ');
 }
 
-void feed(ref DocState doc, ubyte tok) {
-  table[doc.st](doc, tok);
+void feed(ubyte tok) {
+  if (tok == cast(ubyte)'\n') {
+    lineNumber++;
+  }
+  table[st](tok);
 }
 
 void finish() {
@@ -155,35 +165,35 @@ void pop(S)(ref Appender!(S[]) app) {
   app.shrinkTo(app[].length-1);
 }
 
-void popSegment(ref DocState doc) {
-  doc.segs.pop();
-  if (doc.segs[].length == 0) {
-    doc.st = ParsingState.Root;
+void popSegment() {
+  segs.pop();
+  if (segs[].length == 0) {
+    st = ParsingState.Root;
     return;
   }
 
-  final switch(doc.segs.last.type) {
+  final switch(segs.last.type) {
     case SegmentType.JsonObject:
-      doc.st = ParsingState.ObjWantingKey;
+      st = ParsingState.ObjWantingKey;
       return;
     case SegmentType.JsonArray:
-      doc.st = ParsingState.ArrWantingValue;
+      st = ParsingState.ArrWantingValue;
       return;
   }
 }
 
 // State parsing functions
 
-void root(ref DocState doc, ubyte tok) {
+void root(ubyte tok) {
   if ( tok == cast(ubyte)'{' ) {
-    doc.st = ParsingState.ObjWantingKey;
-    doc.segs.put(objectSegment());
+    st = ParsingState.ObjWantingKey;
+    segs.put(objectSegment());
     return;
   }
 
   if ( tok == cast(ubyte)'[' ) {
-    doc.st = ParsingState.ArrWantingValue;
-    doc.segs.put(arraySegment());
+    st = ParsingState.ArrWantingValue;
+    segs.put(arraySegment());
     return;
   }
 
@@ -191,7 +201,7 @@ void root(ref DocState doc, ubyte tok) {
   //put(cast(char)tok);
 }
 
-void objWantingKey(ref DocState doc, ubyte tok) {
+void objWantingKey(ubyte tok) {
   // {     "some"   : "thing" }
   //  1     2
   // {"some":"thing"  , "else": true }
@@ -201,178 +211,177 @@ void objWantingKey(ref DocState doc, ubyte tok) {
   if (isWhite(tok) || tok == cast(ubyte)',') return;
 
   if (tok == cast(ubyte)'"') {
-    doc.st = ParsingState.ObjReadingKey;
-    doc.segs.last.key.length = 0;
+    st = ParsingState.ObjReadingKey;
+    segs.last.key.length = 0;
     return;
   }
 
   if (tok == cast(ubyte)'}') {
-    popSegment(doc);
+    popSegment();
     return;
   }
 
-  doc.st = ParsingState.Root;
-  doc.segs.clear();
+  st = ParsingState.Root;
+  segs.clear();
 }
 
-void objReadingKey(ref DocState doc, ubyte tok) {
+void objReadingKey(ubyte tok) {
   if (tok == cast(ubyte)'\\') {
-    doc.segs.last.key ~= tok;
-    doc.st = ParsingState.ObjReadingKeyEscaped;
+    segs.last.key ~= tok;
+    st = ParsingState.ObjReadingKeyEscaped;
     return;
   }
 
   if (tok == cast(ubyte)'"') {
-    doc.st = ParsingState.ObjWantingValue;
+    st = ParsingState.ObjWantingValue;
     return;
   }
 
-  doc.segs.last.key ~= tok;
+  segs.last.key ~= tok;
 }
 
-void objReadingKeyEscaped(ref DocState doc, ubyte tok) {
-  doc.segs.last.key ~= tok;
-  doc.st = ParsingState.ObjReadingKey;
+void objReadingKeyEscaped(ubyte tok) {
+  segs.last.key ~= tok;
+  st = ParsingState.ObjReadingKey;
 }
 
-void objWantingValue(ref DocState doc, ubyte tok) {
-  //write("TODO, but with key=", cast(string)doc.segs.last.data.key[]);
+void objWantingValue(ubyte tok) {
   if (isWhite(tok) || tok == cast(ubyte)':') return;
 
   if (tok == cast(ubyte)'{' ) {
-    doc.st = ParsingState.ObjWantingKey;
-    doc.segs.put(objectSegment());
+    st = ParsingState.ObjWantingKey;
+    segs.put(objectSegment());
     return;
   }
   
   if (tok == cast(ubyte)'[' ) {
-    doc.st = ParsingState.ArrWantingValue;
-    doc.segs.put(arraySegment());
+    st = ParsingState.ArrWantingValue;
+    segs.put(arraySegment());
     return;
   }
 
   if (tok == cast(ubyte)'"' ) {
-    printFullKey(doc);
+    printFullKey();
     printByte(cast(ubyte)'"');
-    doc.st = ParsingState.ObjReadingStringValue;
+    st = ParsingState.ObjReadingStringValue;
     return;
   }
 
   // TODO: If we wanted to make sure the value is valid, could do
   // case 't', 'f', '0-9', 'n'. Don't really care though!
 
-  printFullKey(doc);
+  printFullKey();
   printByte(tok);
-  doc.st = ParsingState.ObjReadingBareValue;
+  st = ParsingState.ObjReadingBareValue;
 }
 
-void arrWantingValue(ref DocState doc, ubyte tok) {
+void arrWantingValue(ubyte tok) {
   if (isWhite(tok) || tok == cast(ubyte)',') return;
 
-  doc.segs.last.idx++;
+  segs.last.idx++;
   
   if (tok == cast(ubyte)'{' ) {
-    doc.st = ParsingState.ObjWantingKey;
-    doc.segs.put(objectSegment());
+    st = ParsingState.ObjWantingKey;
+    segs.put(objectSegment());
     return;
   }
 
   if (tok == cast(ubyte)'[' ) {
-    doc.st = ParsingState.ArrWantingValue;
-    doc.segs.put(arraySegment());
+    st = ParsingState.ArrWantingValue;
+    segs.put(arraySegment());
     return;
   }
   
   if (tok == cast(ubyte)']' ) {
-    popSegment(doc);
+    popSegment();
     return;
   }
 
   if (tok == cast(ubyte)'"' ) {
-    printFullKey(doc);
+    printFullKey();
     printByte(cast(ubyte)'"');
-    doc.st = ParsingState.ArrReadingStringValue;
+    st = ParsingState.ArrReadingStringValue;
     return;
   }
 
   // TODO: If we wanted to make sure the value is valid, could do
   // case 't', 'f', '0-9', 'n'
 
-  printFullKey(doc);
+  printFullKey();
   printByte(tok);
-  doc.st = ParsingState.ArrReadingBareValue;
+  st = ParsingState.ArrReadingBareValue;
 }
 
-void objReadingStringValue(ref DocState doc, ubyte tok) {
+void objReadingStringValue(ubyte tok) {
   if ( tok == cast(ubyte)'\\' ) {
-    doc.st = ParsingState.ObjReadingStringValueEscaped;
+    st = ParsingState.ObjReadingStringValueEscaped;
     printByte(tok);
     return;
   }
 
   if ( tok == cast(ubyte)'"' ) {
-    doc.st = ParsingState.ObjWantingKey;
+    st = ParsingState.ObjWantingKey;
     printByte(cast(ubyte)'"');
-    printNewline(doc.flushOnEveryLine);
+    printNewline(flushOnEveryLine);
     return;
   }
 
   printByte(tok);
 }
 
-void objReadingStringValueEscaped(ref DocState doc, ubyte tok) {
+void objReadingStringValueEscaped(ubyte tok) {
   printByte(tok);
-  doc.st = ParsingState.ObjReadingStringValue;
+  st = ParsingState.ObjReadingStringValue;
 }
 
-void arrReadingStringValue(ref DocState doc, ubyte tok) {
+void arrReadingStringValue(ubyte tok) {
   if ( tok == cast(ubyte)'\\' ) {
-    doc.st = ParsingState.ArrReadingStringValueEscaped;
+    st = ParsingState.ArrReadingStringValueEscaped;
     printByte(cast(ubyte)'\\');
     return;
   }
 
   if ( tok == cast(ubyte)'"' ) {
-    doc.st = ParsingState.ArrWantingValue;
+    st = ParsingState.ArrWantingValue;
     printByte(cast(ubyte)'"');
-    printNewline(doc.flushOnEveryLine);
+    printNewline(flushOnEveryLine);
     return;
   }
 
   printByte(tok);
 }
 
-void arrReadingStringValueEscaped(ref DocState doc, ubyte tok) {
+void arrReadingStringValueEscaped(ubyte tok) {
   printByte(tok);
-  doc.st = ParsingState.ArrReadingStringValue;
+  st = ParsingState.ArrReadingStringValue;
 }
 
-void objReadingBareValue(ref DocState doc, ubyte tok) {
+void objReadingBareValue(ubyte tok) {
   if (tok == cast(ubyte)'}') {
-    printNewline(doc.flushOnEveryLine);
-    popSegment(doc);
+    printNewline(flushOnEveryLine);
+    popSegment();
     return;
   }
 
   if ( isWhite(tok) || tok == cast(ubyte)',' ) {
-    printNewline(doc.flushOnEveryLine);
-    doc.st = ParsingState.ObjWantingKey;
+    printNewline(flushOnEveryLine);
+    st = ParsingState.ObjWantingKey;
     return;
   }
 
   printByte(tok);
 }
 
-void arrReadingBareValue(ref DocState doc, ubyte tok) {
+void arrReadingBareValue(ubyte tok) {
   if (tok == cast(ubyte)']') {
-    printNewline(doc.flushOnEveryLine);
-    popSegment(doc);
+    printNewline(flushOnEveryLine);
+    popSegment();
     return;
   }
 
   if ( isWhite(tok) || tok == cast(ubyte)',' ) {
-    printNewline(doc.flushOnEveryLine);
-    doc.st = ParsingState.ArrWantingValue;
+    printNewline(flushOnEveryLine);
+    st = ParsingState.ArrWantingValue;
     return;
   }
 

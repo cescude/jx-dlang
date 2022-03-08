@@ -3,7 +3,7 @@ import std.array;
 import std.getopt;
 import std.exception;
 
-import json : DocState, feed, finish;
+import json : init, feed, finish;
 
 struct Options {
   bool withFilename = false;
@@ -51,17 +51,10 @@ void process(string[] files, const Options opts) {
 }
 
 void processStdin(bool withFilename, bool withLineNumbers) {
-  DocState doc = { 
-    flushOnEveryLine: true,
-    printLineNumbers: withLineNumbers,
-    filename: withFilename ? cast(ubyte[])"-" : null
-  };
+  init(true, withLineNumbers, withFilename ? cast(ubyte[])"-" : null);
 
   foreach (const ubyte[] buffer; stdin.chunks(1)) {
-    if (buffer[0] == cast(ubyte)'\n') {
-      doc.lineNumber++;
-    }
-    doc.feed(buffer[0]);
+    feed(buffer[0]);
   }
 }
 
@@ -69,17 +62,11 @@ void processFile(string filename, bool withFilename, bool withLineNumbers) {
   try {
     auto f = File(filename, "r");
 
-    DocState doc = {
-      printLineNumbers: withLineNumbers,
-      filename: withFilename ? cast(ubyte[])filename : null
-    };
+    init(false, withLineNumbers, withFilename ? cast(ubyte[])filename : null);
 
     foreach (const ubyte[] buffer; f.chunks(4096)) {
       for (size_t i=0; i<buffer.length; i++) {
-        if (buffer[i] == cast(ubyte)'\n') {
-          doc.lineNumber++;
-        }
-        doc.feed(buffer[i]);
+        feed(buffer[i]);
       }
     }
   }
