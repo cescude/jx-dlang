@@ -1,8 +1,8 @@
 module json;
 
-import std.stdio;
 import std.array;
 import std.exception;
+import std.stdio : stdin, File, chunks, writeln;
 
 ParsingState st;
 bool flushOnEveryLine;
@@ -32,25 +32,27 @@ void init(bool optFlushOnEveryLine, bool optPrintLineNumbers, ubyte[] optFilenam
 
 ubyte[4096] writeBuffer;
 size_t writeBufferLength = 0;
-void flush() {
-  stdout.rawWrite(writeBuffer[0..writeBufferLength]);
+void flush() nothrow @nogc {
+  import core.stdc.stdio : fwrite, stdout;
+  fwrite(&writeBuffer[0], ubyte.sizeof, writeBufferLength, stdout);
+  // TODO: Is it important to check the return value of fwrite()?
   writeBufferLength = 0;
 }
 
-void printByte(ubyte b) {
+void printByte(ubyte b) nothrow @nogc {
   if (writeBufferLength == writeBuffer.length) {
     flush();
   }
   writeBuffer[writeBufferLength++] = b;
 }
 
-void printByteSlice(const ubyte[] buffer) {
+void printByteSlice(const ubyte[] buffer) nothrow @nogc {
   foreach (ubyte b; buffer) {
     printByte(b);
   }
 }
 
-void printNumber(size_t n) {
+void printNumber(size_t n) nothrow @nogc {
   size_t numDigits = 0;
   ubyte[20] buf; // <-- check to see how large this actually needs to be TODO!
   if (n == 0) {
@@ -69,14 +71,14 @@ void printNumber(size_t n) {
   }
 }
 
-void printNewline(bool doFlush) {
+void printNewline(bool doFlush) nothrow @nogc {
   printByte(cast(ubyte)'\n');
   if (doFlush) {
     flush();
   }
 }
 
-void printFullKey() {
+void printFullKey() nothrow @nogc {
   if (filename !is null) {
     printByteSlice(filename);
     printByte(':');
@@ -178,11 +180,11 @@ Segment arraySegment() {
   return s;
 }
 
-bool isWhite(ubyte b) {
+bool isWhite(ubyte b) nothrow @nogc {
   return b <= cast(ubyte)' ';
 }
 
-ref S last(S)(ref Appender!(S[]) app) {
+ref S last(S)(ref Appender!(S[]) app) nothrow @nogc {
   return app[][app[].length-1];
 }
 
@@ -250,7 +252,7 @@ void objWantingKey(ubyte tok) {
   segs.clear();
 }
 
-void objReadingKey(ubyte tok) {
+void objReadingKey(ubyte tok) nothrow {
   if (tok == cast(ubyte)'\\') {
     segs.last.key.put(tok);
     st = ParsingState.ObjReadingKeyEscaped;
@@ -337,7 +339,7 @@ void arrWantingValue(ubyte tok) {
   st = ParsingState.ArrReadingBareValue;
 }
 
-void objReadingStringValue(ubyte tok) {
+void objReadingStringValue(ubyte tok) nothrow @nogc {
   if ( tok == cast(ubyte)'\\' ) {
     st = ParsingState.ObjReadingStringValueEscaped;
     printByte(tok);
@@ -354,12 +356,12 @@ void objReadingStringValue(ubyte tok) {
   printByte(tok);
 }
 
-void objReadingStringValueEscaped(ubyte tok) {
+void objReadingStringValueEscaped(ubyte tok) nothrow @nogc {
   printByte(tok);
   st = ParsingState.ObjReadingStringValue;
 }
 
-void arrReadingStringValue(ubyte tok) {
+void arrReadingStringValue(ubyte tok) nothrow @nogc {
   if ( tok == cast(ubyte)'\\' ) {
     st = ParsingState.ArrReadingStringValueEscaped;
     printByte(cast(ubyte)'\\');
@@ -376,7 +378,7 @@ void arrReadingStringValue(ubyte tok) {
   printByte(tok);
 }
 
-void arrReadingStringValueEscaped(ubyte tok) {
+void arrReadingStringValueEscaped(ubyte tok) nothrow @nogc {
   printByte(tok);
   st = ParsingState.ArrReadingStringValue;
 }
