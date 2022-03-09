@@ -33,7 +33,11 @@ void init(bool optFlushOnEveryLine, bool optPrintLineNumbers, ubyte[] optFilenam
 ubyte[4096] writeBuffer;
 size_t writeBufferLength = 0;
 void flush() {
-  stdout.rawWrite(writeBuffer[0..writeBufferLength]);
+  version (unittest) {
+  }
+  else {
+    stdout.rawWrite(writeBuffer[0..writeBufferLength]);
+  }
   writeBufferLength = 0;
 }
 
@@ -44,15 +48,39 @@ void printByte(ubyte b) {
   writeBuffer[writeBufferLength++] = b;
 }
 
+unittest {
+  flush();
+
+  for (size_t i=0; i<writeBuffer.length*2; i++) {
+    auto b = cast(ubyte)(i % 251);
+    printByte(b);
+    assert(writeBuffer[writeBufferLength-1] == b);
+  }
+}
+
 void printByteSlice(const ubyte[] buffer) {
   foreach (ubyte b; buffer) {
     printByte(b);
   }
 }
 
+unittest {
+  flush();
+
+  printByteSlice(cast(ubyte[])"one");
+  printByteSlice(cast(ubyte[])"two");
+  printByte('-');
+  printByteSlice(cast(ubyte[])"three");
+  assert(cast(ubyte[])"onetwo-three" == writeBuffer[0..writeBufferLength]);
+}
+
 void printNumber(size_t n) {
+
+  // Use format to figure out how large a size_t is (it's 20)
+  import std.format;
+  ubyte[format!"%d"(n.max).length] buf;
+
   size_t numDigits = 0;
-  ubyte[20] buf; // <-- check to see how large this actually needs to be TODO!
   if (n == 0) {
     printByte(cast(ubyte)'0');
     return;
@@ -69,11 +97,36 @@ void printNumber(size_t n) {
   }
 }
 
+unittest {
+  import std.format;
+
+  // We want it to overflow & wrap
+  for (size_t i=size_t.max-100; i!=100; i++) {
+    flush();
+    printNumber(i);
+    assert(cast(ubyte[])format!"%d"(i) == writeBuffer[0..writeBufferLength]);
+  }
+}
+
 void printNewline(bool doFlush) {
   printByte(cast(ubyte)'\n');
   if (doFlush) {
     flush();
   }
+}
+
+unittest {
+  flush();
+
+  printByte('1');
+  printNewline(false); // Don't flush, there will still be data in our write buffer
+  assert(writeBufferLength > 0);
+  assert(writeBuffer[0..2] == cast(ubyte[])"1\n");
+
+  printNewline(true);
+  assert(writeBufferLength == 0);
+  // Since we don't clear the buffer, we can still inspect it
+  assert(writeBuffer[0..3] == cast(ubyte[])"1\n\n");
 }
 
 void printFullKey() {
@@ -102,6 +155,92 @@ void printFullKey() {
  
   printByte(' ');
   printByte(' ');
+}
+
+unittest {
+  // Two objects are separated by a dot
+  flush();
+  init(true, false, null);
+  segs ~= objectSegment();
+  segs ~= objectSegment();
+  segs[][0].key ~= cast(ubyte[])"data";
+  segs[][1].key ~= cast(ubyte[])"one";
+
+  printFullKey();
+
+  ubyte[] t = cast(ubyte[])"data.one  ";
+  assert(t == writeBuffer[0..t.length]);
+}
+
+unittest {
+  // An object and an array segment are separated by a dot
+  flush();
+  init(true, false, null);
+  segs ~= objectSegment();
+  segs ~= arraySegment();
+  segs[][0].key ~= cast(ubyte[])"data";
+  segs[][1].idx = 3;
+
+  printFullKey();
+
+  ubyte[] t = cast(ubyte[])"data.2  ";
+  assert(t == writeBuffer[0..t.length]);
+}
+
+unittest {
+  // An array and object segment works too
+  flush();
+  init(true, false, null);
+  segs ~= arraySegment();
+  segs ~= objectSegment();
+  segs[][0].idx = 5;
+  segs[][1].key ~= cast(ubyte[])"data";
+
+  printFullKey();
+
+  ubyte[] t = cast(ubyte[])"4.data  ";
+  assert(t == writeBuffer[0..t.length]);
+}
+
+unittest {
+  // Ensure printing line numbers works
+  flush();
+  init(true, true, null);
+  segs ~= arraySegment();
+  segs[][0].idx = 5;
+  lineNumber = 50;
+
+  printFullKey();
+
+  ubyte[] t = cast(ubyte[])"50:4  ";
+  assert(t == writeBuffer[0..t.length]);
+}
+
+unittest {
+  // Ensure printing filenames works
+  flush();
+  init(true, false, cast(ubyte[])"somefile.json");
+  segs ~= objectSegment();
+  segs[][0].key ~= cast(ubyte[])"somekey";
+
+  printFullKey();
+
+  ubyte[] t = cast(ubyte[])"somefile.json:somekey  ";
+  assert(t == writeBuffer[0..t.length]);
+}
+
+unittest {
+  // Ensure printing filenames AND line numbers works
+  flush();
+  init(true, true, cast(ubyte[])"somefile.json");
+  segs ~= objectSegment();
+  segs[][0].key ~= cast(ubyte[])"somekey";
+  lineNumber = 15;
+
+  printFullKey();
+
+  ubyte[] t = cast(ubyte[])"somefile.json:15:somekey  ";
+  assert(t == writeBuffer[0..t.length]);
 }
 
 enum ParsingState {
